@@ -11,9 +11,9 @@
 //
 // TODO:Student Information
 //
-const char *studentName = "NAME";
-const char *studentID   = "PID";
-const char *email       = "EMAIL";
+const char *studentName = "Jiancheng Xiong, Svante Aretun";
+const char *studentID   = "200480108, ";
+const char *email       = "jix123@ucsd.edu, svante92@ucsd.edu";
 
 //------------------------------------//
 //      Predictor Configuration       //
@@ -33,9 +33,48 @@ int verbose;
 //      Predictor Data Structures     //
 //------------------------------------//
 
-//
-//TODO: Add your own Branch Predictor data structures here
-//
+// Gshare keeps one global history register and a table of 2-bit counters.
+// The table has 2^ghistoryBits entries and is indexed by
+// (low PC bits) XOR (global history).
+static uint8_t *gshareBHT = NULL;
+static uint32_t gshareHistory = 0;
+static uint32_t gshareMask = 0;
+
+// Index used by both prediction and training. History is still the value
+// that produced the prediction, because training updates it afterward.
+static uint32_t
+gshare_index(uint32_t pc)
+{
+  return (pc ^ gshareHistory) & gshareMask;
+}
+
+static uint8_t
+gshare_predict(uint32_t pc)
+{
+  uint8_t counter = gshareBHT[gshare_index(pc)];
+  if (counter >= WT) {
+    return TAKEN;
+  }
+  return NOTTAKEN;
+}
+
+// Saturating 2-bit update: taken moves toward ST, not-taken toward SN.
+static void
+gshare_train(uint32_t pc, uint8_t outcome)
+{
+  uint32_t index = gshare_index(pc);
+
+  if (outcome == TAKEN) {
+    if (gshareBHT[index] < ST) {
+      gshareBHT[index]++;
+    }
+  } else if (gshareBHT[index] > SN) {
+    gshareBHT[index]--;
+  }
+
+  // Shift the resolved outcome into the least significant history bit.
+  gshareHistory = ((gshareHistory << 1) | outcome) & gshareMask;
+}
 
 
 //------------------------------------//
@@ -47,9 +86,17 @@ int verbose;
 void
 init_predictor()
 {
-  //
-  //TODO: Initialize Branch Predictor Data Structures
-  //
+  if (bpType != GSHARE) {
+    return;
+  }
+
+  uint32_t numEntries = 1u << ghistoryBits;
+  gshareMask = numEntries - 1;
+  gshareHistory = NOTTAKEN;
+  gshareBHT = malloc(numEntries * sizeof(uint8_t));
+  for (uint32_t i = 0; i < numEntries; i++) {
+    gshareBHT[i] = WN;
+  }
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -59,15 +106,12 @@ init_predictor()
 uint8_t
 make_prediction(uint32_t pc)
 {
-  //
-  //TODO: Implement prediction scheme
-  //
-
   // Make a prediction based on the bpType
   switch (bpType) {
     case STATIC:
       return TAKEN;
     case GSHARE:
+      return gshare_predict(pc);
     case TOURNAMENT:
     case CUSTOM:
     default:
@@ -85,7 +129,11 @@ make_prediction(uint32_t pc)
 void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
-  //
-  //TODO: Implement Predictor training
-  //
+  switch (bpType) {
+    case GSHARE:
+      gshare_train(pc, outcome);
+      break;
+    default:
+      break;
+  }
 }
